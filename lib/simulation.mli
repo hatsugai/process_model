@@ -1,4 +1,4 @@
-open Process_model
+open Process
 
 module type Simulation =
   sig

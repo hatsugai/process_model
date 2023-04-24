@@ -1,4 +1,5 @@
 open Base.Hash.Builtin
+open Process_model
 
 (* step 1. define events and channels *)
 
@@ -19,7 +20,7 @@ module E =
 
 (* step 2. make process model module *)
 
-module P = Process_model.Make(E)
+module P = Process.Make(E)
 
 open E
 open P

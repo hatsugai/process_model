@@ -1,6 +1,6 @@
 (executable
  (name sim)
- (libraries process_model simulation)
+ (libraries process_model)
  (flags (-w -32))
  (promote (until-clean))
  (preprocess

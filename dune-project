@@ -2,6 +2,3 @@
 
 (package
  (name process_model))
-
-(package
- (name simulation))
