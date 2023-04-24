@@ -1,0 +1,7 @@
+(executable
+ (name sim)
+ (libraries process_model simulation)
+ (flags (-w -32))
+ (promote (until-clean))
+ (preprocess
+  (pps ppx_deriving.show ppx_deriving.eq ppx_deriving.ord ppx_hash)) )
