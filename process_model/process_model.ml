@@ -663,6 +663,7 @@ module Make(E : EventType) : ProcessModel
                      let t = Receive (ch, g, (fun e -> pk (f e))) in
                      loop (t::vists) tauts xs')
           in
+          let tauts = List.map (fun (htag, p) -> (htag, pk p)) tauts in
           loop [] tauts vists
         method tick = process#tick
         method class_id = obj_adr ref_p
