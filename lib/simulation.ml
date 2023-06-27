@@ -19,7 +19,7 @@ module Make(P : ProcessModel) : Simulation
     type channel = P.channel
     type process = P.process
 
-    type command = Index of int | Undo
+    type command = Index of int | Undo | Analysis
 
     let show_trans t =
       match t with
@@ -38,12 +38,14 @@ module Make(P : ProcessModel) : Simulation
           printf "%d. %s\n" (m+i) (P.H.show htag))
         ts;
       (if tick then
-         printf "%d. tick -> OMEGA\n" (m+n))
+         printf "%d. tick\n" (m+n))
 
     let rec input () =
       let x = read_line () in
       if x <> "" && x.[0] = 'u' then
         Undo
+      else if x <> "" && x.[0] = 'a' then
+        Analysis
       else
         try
           Scanf.sscanf x "%d" (fun k -> Index k)
@@ -59,6 +61,23 @@ module Make(P : ProcessModel) : Simulation
           printf "  %d. %s\n" i (show_event e))
         es
 
+    let desc_process p =
+      let (vs, ts) = P.transitions p in
+      printf "----------------------------------------\n";
+      printf "%s\n" (P.show_process p);
+      print_transitions vs ts p#tick
+
+    let rec analysis p =
+      match P.anatomy p with
+        P.Alone -> desc_process p
+      | Choice _ -> ()
+      | InternalChoice _ -> ()
+      | ConcurrentComposition ps -> List.iter analysis ps
+      | Interleave ps -> List.iter analysis ps
+      | SequentialComposition (p, _q) -> analysis p
+      | Hide p -> analysis p
+      | Rename p -> analysis p
+
     let simulation channel_to_event_list p =
 
       let rec loop (hist : P.process list) (p : P.process) =
@@ -72,6 +91,8 @@ module Make(P : ProcessModel) : Simulation
              (match hist with
                 [] -> printf "no history\n"; command ()
               | p::hist' -> loop hist' p)
+          | Analysis ->
+             (analysis p; command ())
           | Index k ->
              if k >= 0 && k < m then
                (match List.nth vs k with
@@ -84,6 +105,7 @@ module Make(P : ProcessModel) : Simulation
                      printf ">> "; flush stdout;
                      match input () with
                        Undo -> command ()
+                     | Analysis -> command ()
                      | Index i ->
                         if i >= 0 && i < m then
                           let e = List.nth es i in
