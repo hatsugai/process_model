@@ -217,6 +217,13 @@ let pq = P.interleave [p; q]
 
 (**************************************************************************)
 
-let channel_to_event _ch = []
+let channel_to_event_list _ch = []
 
-let ltsx = unfold channel_to_event pq
+let ltsx = unfold channel_to_event_list pq
+
+(**************************************************************************)
+
+module S = Simulation.Make(P)
+
+let () =
+  S.simulation channel_to_event_list pq
