@@ -66,6 +66,7 @@ module type ProcessModel =
       set_state : unit;
       hash : int;
       anatomy : anatomy;
+      pwalk : unit;
       show : string >
 
     val transitions : process -> transf_res
@@ -73,23 +74,25 @@ module type ProcessModel =
     val compare_process : process -> process -> int
     val hash_process : process -> int
     val show_process : process -> string
+    val pwalk : process -> unit
 
     type 'state process_class = {
         transf : ('state -> process) -> 'state -> transf_res;
         compare : 'state -> 'state -> int;
         hash : 'state -> int;
         show : 'state -> string;
+        pwalk : 'state -> unit;
         mutable state : 'state;
       }
 
     val make_process_class :
       (('s -> process) -> 's -> trans list) ->
       ('s -> 's -> int) ->
-      ('s -> int) -> ('s -> string) -> 's -> 's process_class
+      ('s -> int) -> ('s -> string) -> ?pwalk:('s -> unit) -> 's -> 's process_class
     val make_process_class_tau :
       (('s -> process) -> 's -> trans list * tau_trans list) ->
       ('s -> 's -> int) ->
-      ('s -> int) -> ('s -> string) -> 's -> 's process_class
+      ('s -> int) -> ('s -> string) -> ?pwalk:('s -> unit) -> 's -> 's process_class
     val make_process : 's process_class -> 's -> process
 
     val omega : process
@@ -160,6 +163,7 @@ module Make(E : EventType) : ProcessModel
       set_state : unit;
       hash : int;
       anatomy : anatomy;
+      pwalk : unit;
       show : string >
 
     class virtual process_abstract =
@@ -171,6 +175,7 @@ module Make(E : EventType) : ProcessModel
         method virtual set_state : unit
         method virtual hash : int
         method virtual anatomy : anatomy
+        method virtual pwalk : unit
         method virtual show : string
         method equal p = self#compare p = 0
       end
@@ -180,12 +185,14 @@ module Make(E : EventType) : ProcessModel
     let compare_process p q = p#compare q
     let hash_process p = p#hash
     let show_process p = p#show
+    let pwalk p = p#pwalk
 
     type 'state process_class = {
         transf : ('state -> process) -> 'state -> transf_res;
         compare : 'state -> 'state -> int;
         hash : 'state -> int;
         show : 'state -> string;
+        pwalk : 'state -> unit;
         mutable state : 'state;
       }
 
@@ -210,15 +217,18 @@ module Make(E : EventType) : ProcessModel
         method set_state = process_class.state <- state
         method hash = process_class.hash state
         method anatomy = Alone
+        method pwalk = process_class.pwalk state
         method show = process_class.show state
       end
 
-    let make_process_class transf compare hash show state =
+    let make_process_class transf compare hash show
+          ?(pwalk=(fun _ -> ())) state =
       let transf pk state = (transf pk state, []) in
-      { transf; compare; hash; show; state }
+      { transf; compare; hash; show; pwalk; state }
 
-    let make_process_class_tau transf compare hash show state =
-      { transf; compare; hash; show; state }
+    let make_process_class_tau transf compare hash show
+          ?(pwalk=(fun _ -> ())) state =
+      { transf; compare; hash; show; pwalk; state }
 
     let make_process process_class initial_state =
       ((new process_concrete process_class initial_state) :> process)
@@ -242,6 +252,7 @@ module Make(E : EventType) : ProcessModel
         method set_state = ()
         method hash = 0
         method anatomy = Alone
+        method pwalk = ()
         method show = "OMEGA"
       end
 
@@ -257,6 +268,7 @@ module Make(E : EventType) : ProcessModel
         method set_state = ()
         method hash = 0
         method anatomy = Alone
+        method pwalk = ()
         method show = "STOP"
       end
 
@@ -272,6 +284,7 @@ module Make(E : EventType) : ProcessModel
         method set_state = ()
         method hash = 0
         method anatomy = Alone
+        method pwalk = ()
         method show = "SKIP"
       end
 
@@ -321,6 +334,7 @@ module Make(E : EventType) : ProcessModel
         method hash =
           List.fold_left (fun hv p -> hv + hash_process p) 0 ps
         method anatomy = InternalChoice ps
+        method pwalk = ()
         method show = "|~|" ^ (show_process_list ps)
       end
 
@@ -369,6 +383,7 @@ module Make(E : EventType) : ProcessModel
         method hash =
           List.fold_left (fun hv p -> hv + hash_process p) 0 ps
         method anatomy = Choice ps
+        method pwalk = ()
         method show = "[]" ^ (show_process_list ps)
       end
 
@@ -543,6 +558,8 @@ module Make(E : EventType) : ProcessModel
         method hash =
           List.fold_left (fun hv p -> hv + hash_process p) 0 ps
         method anatomy = ConcurrentComposition ps
+        method pwalk =
+          List.iter (fun p -> p#pwalk) ps
         method show = "||" ^ (show_process_list ps)
       end
 
@@ -618,6 +635,8 @@ module Make(E : EventType) : ProcessModel
         method hash =
           List.fold_left (fun hv p -> hv + hash_process p) 0 ps
         method anatomy = Interleave ps
+        method pwalk =
+          List.iter (fun p -> p#pwalk) ps
         method show = "|||" ^ (show_process_list ps)
       end
 
@@ -674,6 +693,7 @@ module Make(E : EventType) : ProcessModel
         method set_state = ref_p := process
         method hash = process#hash * 2 + 1
         method anatomy = Hide process
+        method pwalk = process#pwalk
         method show = "hide(" ^ process#show ^ ")"
       end
 
@@ -713,6 +733,7 @@ module Make(E : EventType) : ProcessModel
         method set_state = ref_p := process
         method hash = process#hash
         method anatomy = SequentialComposition (process, q)
+        method pwalk = process#pwalk
         method show = "(" ^ process#show ^ "; " ^ q#show ^ ")"
       end
 

@@ -64,6 +64,7 @@ module type ProcessModel =
       set_state : unit;
       hash : int;
       anatomy : anatomy;
+      pwalk : unit;
       show : string >
 
     val transitions : process -> transf_res
@@ -71,23 +72,27 @@ module type ProcessModel =
     val compare_process : process -> process -> int
     val hash_process : process -> int
     val show_process : process -> string
+    val pwalk : process -> unit
 
     type 'state process_class = {
       transf : ('state -> process) -> 'state -> transf_res;
       compare : 'state -> 'state -> int;
       hash : 'state -> int;
       show : 'state -> string;
+      pwalk : 'state -> unit;
       mutable state : 'state;
     }
 
     val make_process_class :
       (('s -> process) -> 's -> trans list) ->
       ('s -> 's -> int) ->
-      ('s -> int) -> ('s -> string) -> 's -> 's process_class
+      ('s -> int) -> ('s -> string) -> ?pwalk:('s -> unit) -> 's ->
+      's process_class
     val make_process_class_tau :
       (('s -> process) -> 's -> trans list * tau_trans list) ->
       ('s -> 's -> int) ->
-      ('s -> int) -> ('s -> string) -> 's -> 's process_class
+      ('s -> int) -> ('s -> string) -> ?pwalk:('s -> unit) -> 's ->
+      's process_class
     val make_process : 's process_class -> 's -> process
 
     val omega : process
