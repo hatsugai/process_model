@@ -72,6 +72,7 @@ module type ProcessModel =
     val compare_process : process -> process -> int
     val hash_process : process -> int
     val show_process : process -> string
+    val anatomy : process -> anatomy
     val pwalk : process -> unit
 
     type 'state process_class = {
