@@ -34,8 +34,8 @@ module Make(P : ProcessModel) : Simulation
         (fun i t -> printf "%d. %s\n" i (show_trans t))
         vs;
       List.iteri
-        (fun i (htag, q) ->
-          printf "%d. %s -> %s\n" (m+i) (P.H.show htag) (P.show_process q))
+        (fun i (htag, _q) ->
+          printf "%d. %s\n" (m+i) (P.H.show htag))
         ts;
       (if tick then
          printf "%d. tick -> OMEGA\n" (m+n))
@@ -101,6 +101,7 @@ module Make(P : ProcessModel) : Simulation
              else
                (command ())
         in
+        printf "========================================\n";
         printf "%s\n" (P.show_process p);
         print_transitions vs ts p#tick;
         command ()
