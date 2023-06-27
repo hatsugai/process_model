@@ -23,8 +23,8 @@ module Make(P : ProcessModel) : Simulation
 
     let show_trans t =
       match t with
-        P.Event (e, p) ->
-         sprintf "%s -> %s" (P.show_event e) (P.show_process p)
+        P.Event (e, _p) ->
+         sprintf "%s" (P.show_event e)
       | Receive (ch, _g, _f) -> P.show_channel ch
 
     let print_transitions vs ts tick =
@@ -52,11 +52,11 @@ module Make(P : ProcessModel) : Simulation
           printf "error |%s|\n" x;
           input ()
 
-    let print_receive_trans show_event targetf es =
+    let print_receive_trans show_event _targetf es =
       List.iteri
         (fun i e ->
-          let p = targetf e in
-          printf "  %d. %s -> %s\n" i (show_event e) (P.show_process p))
+          (* let p = targetf e in *)
+          printf "  %d. %s\n" i (show_event e))
         es
 
     let simulation channel_to_event_list p =
