@@ -28,7 +28,7 @@ let state_var = ref 0
 
 let prop p =
   pwalk p;
-  !state_var = -108
+  !state_var = 108
 
 
 (**************************************************************************)
@@ -129,7 +129,7 @@ let hp = P.hide event_set p
     type vis_trans = (event * int) list
     type tau_trans = (ievent * int) list
     type ht = (int * (vis_trans * tau_trans * bool) ref) PHT.t
-    exception Unfold_Prop of ht * process * (process * A.t) list
+    exception Unfold_Prop of ht * int * (int * A.t) list
 
     let unfold0 prop channel_to_event_list p =
       let nil = ([], [], false) in
@@ -150,7 +150,7 @@ let hp = P.hide event_set p
            let id = PHT.length ht in
            let r = ref nil in
            PHT.replace ht s (id, r);
-           Queue.add (s, r, path) !que1;
+           Queue.add (s, id, r, path) !que1;
            id
         | Some (id, _r) ->
            dup := !dup + 1;
@@ -164,25 +164,25 @@ let hp = P.hide event_set p
         dup := 0;
         swap ();
         while not (Queue.is_empty !que0) do
-          let (p, r, path) = Queue.take !que0 in
+          let (p, pid, r, path) = Queue.take !que0 in
           (* @_@ prop *)
           (if prop p then
-             raise (Unfold_Prop (ht, p, path)));
+             raise (Unfold_Prop (ht, pid, path)));
           let (vists, tauts) = P.transitions p in
           let vs =
             List.fold_left
               (fun acc trans ->
                 match trans with
                   P.Event (e, q) ->
-                   let id = add q ((p, A.Event e)::path) in
-                   (e, id)::acc
+                   let qid = add q ((pid, A.Event e)::path) in
+                   (e, qid)::acc
                 | Receive (ch, guard, targetf) ->
                    List.fold_left
                      (fun acc e ->
                        if guard e then
                          let q = targetf e in
-                         let id = add q ((p, A.Event e)::path) in
-                         (e, id)::acc
+                         let qid = add q ((pid, A.Event e)::path) in
+                         (e, qid)::acc
                        else
                          acc)
                      acc (channel_to_event_list ch))
@@ -192,7 +192,7 @@ let hp = P.hide event_set p
             List.map
               (fun (htag, q) ->
                 let atag = htag_to_atag htag in
-                let id = add q ((p, atag)::path) in (htag, id))
+                let id = add q ((pid, atag)::path) in (htag, id))
               tauts
           in
           r := (vs, ts, p#tick)
@@ -213,19 +213,56 @@ let hp = P.hide event_set p
 
 (**************************************************************************)
 
-let viz name show_state lts path =
+(* convert (pid, A.t) list to (pid, A.t, qid) list *)
+let convert pid path =
+  let rec loop tris qid path =
+    match path with
+      [] -> tris
+    | (pid, u)::path' ->
+       loop ((pid, u, qid):: tris) pid path'
+  in
+  loop [] pid path
+
+(**************************************************************************)
+
+let viz name show_state ?(pid=(-1)) ?(path=[]) lts =
+  let tris = convert pid path in
+  let state_on_path id =
+    List.exists (fun (id', u) -> id = id') path
+  in
+  let vis_trans_on_path pid e qid =
+    List.exists
+      (fun (pid', u, qid') -> pid' = pid && A.Event e = u && qid = qid')
+      tris
+  in
+  let tau_trans_on_path pid i qid =
+    List.exists
+      (fun (pid', u, qid') -> pid' = pid && htag_to_atag i = u && qid = qid')
+      tris
+  in
   let n = Array.length lts.vis_transv in
   let emit_states ch =
     for id=0 to n-1 do
-      fprintf ch "%d [label=\"%d\\n%s\"];\n" id id (show_state id)
+      if id = pid then
+        fprintf ch "%d [label=\"%d\\n%s\", style=filled, color=red];\n" id id (show_state id)
+      else if state_on_path id then
+        fprintf ch "%d [label=\"%d\\n%s\", penwidth=2.0, color=red, fontcolor=red];\n" id id (show_state id)
+      else
+        fprintf ch "%d [label=\"%d\\n%s\"];\n" id id (show_state id)
     done
   in
   let emit_transitions ch =
     let emit_vis_trans sid (event, tid) =
-      fprintf ch "%d -> %d [label=\"%s\"];\n" sid tid (show_event event)
+      if vis_trans_on_path sid event tid then
+        fprintf ch "%d -> %d [label=\"%s\", penwith=3.0, color=red, fontcolor=red];\n" sid tid (show_event event)
+      else
+        fprintf ch "%d -> %d [label=\"%s\"];\n" sid tid (show_event event)
     in
     let emit_tau_trans sid (ievent, tid) =
-      fprintf ch "%d -> %d [label=\"%s\"];\n" sid tid (P.H.show ievent)
+      if tau_trans_on_path sid ievent tid then
+        fprintf ch "%d -> %d [label=\"%s\", penwith=3.0, color=red, fontcolor=red];\n" sid tid (P.H.show ievent)
+      else
+        fprintf ch "%d -> %d [label=\"%s\"];\n" sid tid (P.H.show ievent)
     in
     for id=0 to n-1 do
       let trans = lts.vis_transv.(id) in
@@ -246,29 +283,36 @@ let viz name show_state lts path =
   let _ = Unix.system command in
   ()
 
+
 (**************************************************************************)
+
 
 let channel_to_event_list _ch = []
 
-let (lts, show_state, path) =
+let (lts, show_state, pid, path) =
   try
     let ht = unfold0 prop channel_to_event_list hp in
     let (lts, statev) =
-      ht_to_vec PHT.length PHT.iter p ht
+      ht_to_vec PHT.length PHT.iter hp ht
     in
     let show i =
       P.show_process statev.(i)
     in
-    (lts, show, [])
+    (lts, show, -1, [])
   with
-    Unfold_Prop (ht, p, path) ->
+    Unfold_Prop (ht, pid, path) ->
     let (lts, statev) =
-      ht_to_vec PHT.length PHT.iter p ht
+      ht_to_vec PHT.length PHT.iter hp ht
     in
     let show i =
       P.show_process statev.(i)
     in
-    (lts, show, path)
+    (lts, show, pid, path)
 
 let () = printf "num of states: %d\n" (Array.length lts.tickv)
-let () = viz "x" show_state lts path
+let () = viz "x" show_state ~pid:pid ~path:path lts
+let () =
+  List.iter
+    (fun (pid, u) ->
+      printf "%d %s\n" pid (A.show u))
+    path
