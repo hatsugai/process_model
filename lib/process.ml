@@ -1,49 +1,18 @@
 open Printf
-
-module type EventType =
-  sig
-    type event
-    type channel
-    val equal_event : event -> event -> bool
-    val equal_channel : channel -> channel -> bool
-    val hash_event : event -> int
-    val hash_channel : channel -> int
-    val compare_event : event -> event -> int
-    val event_to_channel : event -> channel
-    val show_event : event -> string
-    val show_channel : channel -> string
-    val pp_event : Format.formatter -> event -> unit
-    val pp_channel : Format.formatter -> channel -> unit
-    val hash_fold_event : Base.Hash.state -> event -> Base.Hash.state
-  end
+open Type
 
 module type ProcessModel =
   sig
     type event
     type channel
-    val equal_event : event -> event -> bool
-    val equal_channel : channel -> channel -> bool
-    val hash_event : event -> int
-    val hash_channel : channel -> int
-    val compare_event : event -> event -> int
-    val event_to_channel : event -> channel
     val show_event : event -> string
     val show_channel : channel -> string
-    val pp_event : Format.formatter -> event -> unit
-    val pp_channel : Format.formatter -> channel -> unit
-    val hash_fold_event : Base.Hash.state -> event -> Base.Hash.state
-
-    module H : sig
-      type t = Tau | ITick | Hid of event
-      val pp : Format.formatter -> t -> unit
-      val show : t -> string
-    end
 
     type trans =
       Event of event * process
     | Receive of channel * (event -> bool) * (event -> process)
 
-    and tau_trans = H.t * process
+    and tau_trans = event TransitionLabel.ievent * process
 
     and anatomy =
       Alone
@@ -66,6 +35,7 @@ module type ProcessModel =
       set_state : unit;
       hash : int;
       anatomy : anatomy;
+      pwalk : unit;
       show : string >
 
     val transitions : process -> transf_res
@@ -73,23 +43,26 @@ module type ProcessModel =
     val compare_process : process -> process -> int
     val hash_process : process -> int
     val show_process : process -> string
+    val anatomy : process -> anatomy
+    val pwalk : process -> unit
 
     type 'state process_class = {
         transf : ('state -> process) -> 'state -> transf_res;
         compare : 'state -> 'state -> int;
         hash : 'state -> int;
         show : 'state -> string;
+        pwalk : 'state -> unit;
         mutable state : 'state;
       }
 
     val make_process_class :
       (('s -> process) -> 's -> trans list) ->
       ('s -> 's -> int) ->
-      ('s -> int) -> ('s -> string) -> 's -> 's process_class
+      ('s -> int) -> ('s -> string) -> ?pwalk:('s -> unit) -> 's -> 's process_class
     val make_process_class_tau :
       (('s -> process) -> 's -> trans list * tau_trans list) ->
       ('s -> 's -> int) ->
-      ('s -> int) -> ('s -> string) -> 's -> 's process_class
+      ('s -> int) -> ('s -> string) -> ?pwalk:('s -> unit) -> 's -> 's process_class
     val make_process : 's process_class -> 's -> process
 
     val omega : process
@@ -97,47 +70,34 @@ module type ProcessModel =
     val skip : process
 
     val choice : process list -> process
-    val internal_choice : process list -> process
-    val composition : (channel -> bool) -> process list -> process
+    val internal_choice : ?pwalk:(unit -> unit) -> process list -> process
+    val composition : (event -> channel) -> (channel -> bool) -> process list -> process
     val interleave : process list -> process
-    val hide : (channel -> bool) -> process -> process
+    val hide : (event -> channel) -> (channel -> bool) -> process -> process
     val sequential_composition : process -> process -> process
+    val guard_true : event -> bool
   end
 
-module Make(E : EventType) : ProcessModel
-       with type event = E.event
-       with type channel = E.channel
+module Make (E : EventType) (C : ChannelType) : ProcessModel
+       with type event = E.t
+       with type channel = C.t
   =
   struct
-    type event = E.event
-    type channel = E.channel
-
-    let equal_event  = E.equal_event 
-    let equal_channel  = E.equal_channel 
-    let hash_event  = E.hash_event 
-    let hash_channel  = E.hash_channel 
-    let compare_event  = E.compare_event 
-    let event_to_channel  = E.event_to_channel 
-    let show_event  = E.show_event 
-    let show_channel  = E.show_channel 
-    let pp_event  = E.pp_event 
-    let pp_channel  = E.pp_channel 
-    let hash_fold_event  = E.hash_fold_event 
+    type event = E.t
+    type channel = C.t
+    let show_event  = E.show
+    let show_channel  = C.show
 
     exception Error of string
     let error s = raise (Error s)
 
-    module H =
-      struct
-        type t = Tau | ITick | Hid of E.event
-        [@@deriving show { with_path=false }]
-      end
+    let guard_true _ = true
 
     type trans =
       Event of event * process
     | Receive of channel * (event -> bool) * (event -> process)
 
-    and tau_trans = H.t * process
+    and tau_trans = event TransitionLabel.ievent * process
 
     and anatomy =
       Alone
@@ -160,6 +120,7 @@ module Make(E : EventType) : ProcessModel
       set_state : unit;
       hash : int;
       anatomy : anatomy;
+      pwalk : unit;
       show : string >
 
     class virtual process_abstract =
@@ -171,6 +132,7 @@ module Make(E : EventType) : ProcessModel
         method virtual set_state : unit
         method virtual hash : int
         method virtual anatomy : anatomy
+        method virtual pwalk : unit
         method virtual show : string
         method equal p = self#compare p = 0
       end
@@ -180,12 +142,15 @@ module Make(E : EventType) : ProcessModel
     let compare_process p q = p#compare q
     let hash_process p = p#hash
     let show_process p = p#show
+    let anatomy p = p#anatomy
+    let pwalk p = p#pwalk
 
     type 'state process_class = {
         transf : ('state -> process) -> 'state -> transf_res;
         compare : 'state -> 'state -> int;
         hash : 'state -> int;
         show : 'state -> string;
+        pwalk : 'state -> unit;
         mutable state : 'state;
       }
 
@@ -210,15 +175,18 @@ module Make(E : EventType) : ProcessModel
         method set_state = process_class.state <- state
         method hash = process_class.hash state
         method anatomy = Alone
+        method pwalk = process_class.pwalk state
         method show = process_class.show state
       end
 
-    let make_process_class transf compare hash show state =
+    let make_process_class transf compare hash show
+          ?(pwalk=(fun _ -> ())) state =
       let transf pk state = (transf pk state, []) in
-      { transf; compare; hash; show; state }
+      { transf; compare; hash; show; pwalk; state }
 
-    let make_process_class_tau transf compare hash show state =
-      { transf; compare; hash; show; state }
+    let make_process_class_tau transf compare hash show
+          ?(pwalk=(fun _ -> ())) state =
+      { transf; compare; hash; show; pwalk; state }
 
     let make_process process_class initial_state =
       ((new process_concrete process_class initial_state) :> process)
@@ -226,7 +194,7 @@ module Make(E : EventType) : ProcessModel
     module SyncTerm =
       struct
         type t =
-          Send of E.event * process
+          Send of E.t * process
         | Recv of (event -> bool) * (event -> process)
       end
 
@@ -242,6 +210,7 @@ module Make(E : EventType) : ProcessModel
         method set_state = ()
         method hash = 0
         method anatomy = Alone
+        method pwalk = ()
         method show = "OMEGA"
       end
 
@@ -257,6 +226,7 @@ module Make(E : EventType) : ProcessModel
         method set_state = ()
         method hash = 0
         method anatomy = Alone
+        method pwalk = ()
         method show = "STOP"
       end
 
@@ -272,6 +242,7 @@ module Make(E : EventType) : ProcessModel
         method set_state = ()
         method hash = 0
         method anatomy = Alone
+        method pwalk = ()
         method show = "SKIP"
       end
 
@@ -302,12 +273,12 @@ module Make(E : EventType) : ProcessModel
       in
       "[" ^ s ^ "]"
 
-    class process_internal_choice (ps : process list) =
+    class process_internal_choice (pwalk : unit -> unit) (ps : process list) =
       let ref_ps = ref ps in
       object (self)
         inherit process_abstract
         val ps = ps
-        method transitions = ([], List.map (fun p -> (H.Tau, p)) ps)
+        method transitions = ([], List.map (fun p -> (TransitionLabel.Tau, p)) ps)
         method tick = false
         method class_id = obj_adr ps
         method compare p =
@@ -321,14 +292,15 @@ module Make(E : EventType) : ProcessModel
         method hash =
           List.fold_left (fun hv p -> hv + hash_process p) 0 ps
         method anatomy = InternalChoice ps
+        method pwalk = pwalk ()
         method show = "|~|" ^ (show_process_list ps)
       end
 
-    let internal_choice ps =
+    let internal_choice ?(pwalk = fun () -> ()) ps =
       match ps with
         [] -> error __FUNCTION__
       | [_] -> error __FUNCTION__
-      | _ -> ((new process_internal_choice ps) :> process)
+      | _ -> ((new process_internal_choice pwalk ps) :> process)
 
     (*** external choice **********************************************)
 
@@ -369,6 +341,7 @@ module Make(E : EventType) : ProcessModel
         method hash =
           List.fold_left (fun hv p -> hv + hash_process p) 0 ps
         method anatomy = Choice ps
+        method pwalk = ()
         method show = "[]" ^ (show_process_list ps)
       end
 
@@ -380,13 +353,7 @@ module Make(E : EventType) : ProcessModel
 
     (*** concurrent composition ***************************************)
 
-    module CHT =
-      Hashtbl.Make (
-          struct
-            type t = E.channel
-            let equal = E.equal_channel
-            let hash = E.hash_channel
-          end)
+    module CHT = Hashtbl.Make (C)
 
     let rec cartesian_product xss =
       match xss with
@@ -399,7 +366,7 @@ module Make(E : EventType) : ProcessModel
                acc xs)
            [] (cartesian_product xss')
 
-    let composition_imp sync pk ps =
+    let composition_imp event_to_channel sync pk ps =
       let n = List.length ps in
       let ht = CHT.create 0 in
       let reg ch i term =
@@ -424,7 +391,7 @@ module Make(E : EventType) : ProcessModel
           | y::ys' ->
              (match y with
                 SyncTerm.Send (e', q) ->
-                 if E.equal_event e e' then
+                 if E.equal e e' then
                    loop_ev e (q::rs) ys'
                  else
                    None
@@ -495,14 +462,14 @@ module Make(E : EventType) : ProcessModel
                 in
                 let tauts =
                   if p#tick then
-                    (H.ITick, pk (List.rev_append rs (omega::ps')))::tauts
+                    (TransitionLabel.ITick, pk (List.rev_append rs (omega::ps')))::tauts
                   else tauts
                 in
                 loop vists tauts (i+1) (p::rs) ps'
              | x::xs' ->
                 (match x with 
                    Event (e, p') ->
-                    let ch = E.event_to_channel e in
+                    let ch = event_to_channel e in
                     if sync ch then
                       (reg ch i (Send (e, p')); scan vists xs')
                     else
@@ -522,14 +489,14 @@ module Make(E : EventType) : ProcessModel
       in
       loop [] [] 0 [] ps
 
-    class process_composition sync (ps : process list) =
+    class process_composition event_to_channel sync (ps : process list) =
       let ref_ps = ref ps in
       object (self)
         inherit process_abstract
         val ps = ps
         method transitions =
           let pk ps = (({<ps>}) :> process) in
-          composition_imp sync pk ps
+          composition_imp event_to_channel sync pk ps
         method tick =
           List.for_all (fun p -> p#equal omega) ps
         method class_id = obj_adr ref_ps
@@ -543,11 +510,13 @@ module Make(E : EventType) : ProcessModel
         method hash =
           List.fold_left (fun hv p -> hv + hash_process p) 0 ps
         method anatomy = ConcurrentComposition ps
+        method pwalk =
+          List.iter (fun p -> p#pwalk) ps
         method show = "||" ^ (show_process_list ps)
       end
 
-    let composition sync ps =
-      ((new process_composition sync ps) :> process)
+    let composition event_to_channel sync ps =
+      ((new process_composition event_to_channel sync ps) :> process)
 
     let single xs =
       match xs with
@@ -574,7 +543,7 @@ module Make(E : EventType) : ProcessModel
                     (if rs=[] && ps'=[] then
                        error "interleave: cannot happen"
                      else if single rs && ps'=[] then
-                       (H.ITick, List.hd rs)::tauts
+                       (TransitionLabel.ITick, List.hd rs)::tauts
                      else if single ps' && rs=[] then
                        (ITick, List.hd ps')::tauts
                      else
@@ -618,6 +587,8 @@ module Make(E : EventType) : ProcessModel
         method hash =
           List.fold_left (fun hv p -> hv + hash_process p) 0 ps
         method anatomy = Interleave ps
+        method pwalk =
+          List.iter (fun p -> p#pwalk) ps
         method show = "|||" ^ (show_process_list ps)
       end
 
@@ -629,15 +600,9 @@ module Make(E : EventType) : ProcessModel
 
     (*** hide *********************************************************)
 
-    module EHT =
-      Hashtbl.Make(
-          struct
-            type t = event
-            let equal = E.equal_event
-            let hash = E.hash_event
-          end)
+    module EHT = Hashtbl.Make(E)
 
-    class process_hide ch_pred p0 =
+    class process_hide event_to_channel ch_pred p0 =
       let ref_p = ref p0 in
       object (self)
         inherit process_abstract
@@ -651,9 +616,9 @@ module Make(E : EventType) : ProcessModel
             | x::xs' ->
                (match x with
                   Event (e, p') ->
-                   let ch = E.event_to_channel e in
+                   let ch = event_to_channel e in
                    if ch_pred ch then
-                     loop vists ((H.Hid e, pk p')::tauts) xs'
+                     loop vists ((TransitionLabel.Hid e, pk p')::tauts) xs'
                    else
                      loop (Event (e, pk p')::vists) tauts xs'
                 | Receive (ch, g, f) ->
@@ -674,11 +639,12 @@ module Make(E : EventType) : ProcessModel
         method set_state = ref_p := process
         method hash = process#hash * 2 + 1
         method anatomy = Hide process
+        method pwalk = process#pwalk
         method show = "hide(" ^ process#show ^ ")"
       end
 
-    let hide ch_pred process =
-      ((new process_hide ch_pred process) :> process)
+    let hide event_to_channel ch_pred process =
+      ((new process_hide event_to_channel ch_pred process) :> process)
 
     (*** sequential composition ***************************************)
 
@@ -700,7 +666,7 @@ module Make(E : EventType) : ProcessModel
               vists
           in
           let tauts = List.map (fun (htag, q) -> (htag, pk q)) tauts in
-          let tauts = if process#tick then (H.ITick, q)::tauts else tauts in
+          let tauts = if process#tick then (TransitionLabel.ITick, q)::tauts else tauts in
           (vists, tauts)
         method tick = false
         method class_id = obj_adr ref_p
@@ -713,6 +679,7 @@ module Make(E : EventType) : ProcessModel
         method set_state = ref_p := process
         method hash = process#hash
         method anatomy = SequentialComposition (process, q)
+        method pwalk = process#pwalk
         method show = "(" ^ process#show ^ "; " ^ q#show ^ ")"
       end
 

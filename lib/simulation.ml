@@ -1,4 +1,5 @@
 open Printf
+open Type
 open Process
 
 module type Simulation =
@@ -9,7 +10,7 @@ module type Simulation =
     val simulation : (channel -> event list) -> process -> unit
   end
 
-module Make(P : ProcessModel) : Simulation
+module Make (P : ProcessModel) : Simulation
        with type event = P.event
        with type channel = P.channel
        with type process = P.process
@@ -19,12 +20,12 @@ module Make(P : ProcessModel) : Simulation
     type channel = P.channel
     type process = P.process
 
-    type command = Index of int | Undo
+    type command = Index of int | Undo | Analysis
 
     let show_trans t =
       match t with
-        P.Event (e, p) ->
-         sprintf "%s -> %s" (P.show_event e) (P.show_process p)
+        P.Event (e, _p) ->
+         sprintf "%s" (P.show_event e)
       | Receive (ch, _g, _f) -> P.show_channel ch
 
     let print_transitions vs ts tick =
@@ -34,16 +35,18 @@ module Make(P : ProcessModel) : Simulation
         (fun i t -> printf "%d. %s\n" i (show_trans t))
         vs;
       List.iteri
-        (fun i (htag, q) ->
-          printf "%d. %s -> %s\n" (m+i) (P.H.show htag) (P.show_process q))
+        (fun i (htag, _q) ->
+          printf "%d. %s\n" (m+i) (TransitionLabel.show_ievent P.show_event htag))
         ts;
       (if tick then
-         printf "%d. tick -> OMEGA\n" (m+n))
+         printf "%d. tick\n" (m+n))
 
     let rec input () =
       let x = read_line () in
       if x <> "" && x.[0] = 'u' then
         Undo
+      else if x <> "" && x.[0] = 'a' then
+        Analysis
       else
         try
           Scanf.sscanf x "%d" (fun k -> Index k)
@@ -52,12 +55,28 @@ module Make(P : ProcessModel) : Simulation
           printf "error |%s|\n" x;
           input ()
 
-    let print_receive_trans show_event targetf es =
+    let print_receive_trans show_event _targetf es =
       List.iteri
         (fun i e ->
-          let p = targetf e in
-          printf "  %d. %s -> %s\n" i (show_event e) (P.show_process p))
+          printf "  %d. %s\n" i (show_event e))
         es
+
+    let desc_process p =
+      let (vs, ts) = P.transitions p in
+      printf "----------------------------------------\n";
+      printf "%s\n" (P.show_process p);
+      print_transitions vs ts p#tick
+
+    let rec analysis p =
+      match P.anatomy p with
+        P.Alone -> desc_process p
+      | Choice _ -> ()
+      | InternalChoice _ -> ()
+      | ConcurrentComposition ps -> List.iter analysis ps
+      | Interleave ps -> List.iter analysis ps
+      | SequentialComposition (p, _q) -> analysis p
+      | Hide p -> analysis p
+      | Rename p -> analysis p
 
     let simulation channel_to_event_list p =
 
@@ -72,6 +91,8 @@ module Make(P : ProcessModel) : Simulation
              (match hist with
                 [] -> printf "no history\n"; command ()
               | p::hist' -> loop hist' p)
+          | Analysis ->
+             (analysis p; command ())
           | Index k ->
              if k >= 0 && k < m then
                (match List.nth vs k with
@@ -84,6 +105,7 @@ module Make(P : ProcessModel) : Simulation
                      printf ">> "; flush stdout;
                      match input () with
                        Undo -> command ()
+                     | Analysis -> command ()
                      | Index i ->
                         if i >= 0 && i < m then
                           let e = List.nth es i in
@@ -101,6 +123,7 @@ module Make(P : ProcessModel) : Simulation
              else
                (command ())
         in
+        printf "========================================\n";
         printf "%s\n" (P.show_process p);
         print_transitions vs ts p#tick;
         command ()
