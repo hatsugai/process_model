@@ -337,8 +337,8 @@ module Make (E : EventType) (S : StateType) =
       let vv = Array.make n [] in
       let vt = Array.make n [] in
       HT1.iter
-        (fun state br ->
-          let i = Atomic.get br.state_id in
+        (fun state (br : branches1) ->
+          let i = br.state_id in
           vs.(i) <- state;
           vv.(i) <- br.vis_transitions;
           vt.(i) <- br.tau_transitions)

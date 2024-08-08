@@ -88,9 +88,6 @@ module Make (E : EventType) (C : ChannelType) : ProcessModel
     let show_event  = E.show
     let show_channel  = C.show
 
-    exception Error of string
-    let error s = raise (Error s)
-
     let guard_true _ = true
 
     type trans =
@@ -258,7 +255,7 @@ module Make (E : EventType) (C : ChannelType) : ProcessModel
              s
            else
              loop ps' qs'
-        | _, _ -> error __FUNCTION__
+        | _, _ -> Error.f __FUNCTION__
       in
       loop ps qs
 
@@ -298,8 +295,8 @@ module Make (E : EventType) (C : ChannelType) : ProcessModel
 
     let internal_choice ?(pwalk = fun () -> ()) ps =
       match ps with
-        [] -> error __FUNCTION__
-      | [_] -> error __FUNCTION__
+        [] -> Error.f __FUNCTION__
+      | [_] -> Error.f __FUNCTION__
       | _ -> ((new process_internal_choice pwalk ps) :> process)
 
     (*** external choice **********************************************)
@@ -347,24 +344,13 @@ module Make (E : EventType) (C : ChannelType) : ProcessModel
 
     let choice ps =
       match ps with
-        [] -> error __FUNCTION__
+        [] -> Error.f __FUNCTION__
       | [p] -> p
       | _ -> ((new process_external_choice ps) :> process)
 
     (*** concurrent composition ***************************************)
 
     module CHT = Hashtbl.Make (C)
-
-    let rec cartesian_product xss =
-      match xss with
-        [] -> [[]]
-      | xs::xss' ->
-         List.fold_left
-           (fun acc ys ->
-             List.fold_left
-               (fun acc x -> (x::ys)::acc)
-               acc xs)
-           [] (cartesian_product xss')
 
     let composition_imp event_to_channel sync pk ps =
       let n = List.length ps in
@@ -422,7 +408,7 @@ module Make (E : EventType) (C : ChannelType) : ProcessModel
         in
 
         match ys with
-          [] -> error "composition: no processes"
+          [] -> Error.f "composition: no processes"
         | y::ys' ->
            (match y with
             | SyncTerm.Send (e, q) -> loop_ev e [q] ys'
@@ -434,7 +420,7 @@ module Make (E : EventType) (C : ChannelType) : ProcessModel
           CHT.fold
             (fun ch v acc ->
               let xss = Array.to_list v in
-              let yss = cartesian_product xss in
+              let yss = Util.cartesian_product xss in
               List.fold_left
                 (fun acc ys ->
                   match consensus ch ys with
@@ -541,7 +527,7 @@ module Make (E : EventType) (C : ChannelType) : ProcessModel
                 let tauts =
                   if p#tick then
                     (if rs=[] && ps'=[] then
-                       error "interleave: cannot happen"
+                       Error.f "interleave: cannot happen"
                      else if single rs && ps'=[] then
                        (TransitionLabel.ITick, List.hd rs)::tauts
                      else if single ps' && rs=[] then
@@ -594,7 +580,7 @@ module Make (E : EventType) (C : ChannelType) : ProcessModel
 
     let interleave ps =
       match ps with
-        [] -> error __FUNCTION__
+        [] -> Error.f __FUNCTION__
       | [p] -> p
       | _ -> ((new process_interleave ps) :> process)
 
@@ -623,7 +609,7 @@ module Make (E : EventType) (C : ChannelType) : ProcessModel
                      loop (Event (e, pk p')::vists) tauts xs'
                 | Receive (ch, g, f) ->
                    if ch_pred ch then
-                     error "tried to hide receive"
+                     Error.f "tried to hide receive"
                    else
                      let t = Receive (ch, g, (fun e -> pk (f e))) in
                      loop (t::vists) tauts xs')

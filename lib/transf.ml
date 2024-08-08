@@ -13,7 +13,6 @@ module type StateType =
     type t
     val show : t -> string
     val equal : t -> t -> bool
-    val compare : t -> t -> int
     val hash : t -> int
   end
 
